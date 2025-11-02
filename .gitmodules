@@ -1,0 +1,3 @@
+[submodule "external/picohttpparser"]
+	path = external/picohttpparser
+	url = https://github.com/h2o/picohttpparser
