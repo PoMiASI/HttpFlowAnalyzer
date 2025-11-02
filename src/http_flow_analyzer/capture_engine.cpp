@@ -1,0 +1,157 @@
+#include "capture_engine.hpp"
+
+#include <assert.h>
+
+#include <atomic>
+#include <iostream>
+
+constexpr auto PCAP_BUFFER_SIZE = 128 * 1024 * 1024; // 128MB
+constexpr auto PCAP_TIMEOUT = 1000; // 1 second
+constexpr auto PCAP_SNAPLEN = 262144; // 262144 bytes
+
+// User data structure for pcap callback
+struct CallbackData
+{
+    HttpFlowAnalyzer* analyzer;
+    std::atomic<bool>* stop_flag;
+    pcap_t* handle;
+};
+
+extern "C" void pkt_handler(u_char* user, const struct pcap_pkthdr* hdr, const u_char* bytes)
+{
+    CallbackData* data = reinterpret_cast<CallbackData*>(user);
+
+    // Check if we should stop
+    if (data->stop_flag != nullptr && data->stop_flag->load(std::memory_order_acquire))
+    {
+        pcap_breakloop(data->handle);
+        return;
+    }
+
+    data->analyzer->onPacketReceived(hdr, bytes);
+}
+
+CaptureEngine::CaptureEngine(const std::string& interface) : m_handle(nullptr)
+{
+    char errbuf[PCAP_ERRBUF_SIZE];
+
+    m_handle = pcap_create(interface.c_str(), errbuf);
+    if (m_handle == nullptr)
+    {
+        throw std::runtime_error(std::string("pcap_create failed: ") + errbuf);
+    }
+
+    // Set snaplen - 262144 bytes to avoid truncation
+    if (pcap_set_snaplen(m_handle, PCAP_SNAPLEN) != 0)
+    {
+        pcap_close(m_handle);
+        throw std::runtime_error("Failed to set snaplen");
+    }
+
+    if (pcap_set_promisc(m_handle, 1) != 0)
+    {
+        pcap_close(m_handle);
+        throw std::runtime_error("Failed to set promisc mode");
+    }
+
+    if (pcap_set_timeout(m_handle, PCAP_TIMEOUT) != 0)
+    {
+        pcap_close(m_handle);
+        throw std::runtime_error("Failed to set timeout");
+    }
+
+    // CRITICAL: Set large buffer size BEFORE activation (128MB for high-throughput loopback)
+    if (pcap_set_buffer_size(m_handle, PCAP_BUFFER_SIZE) != 0)
+    {
+        pcap_close(m_handle);
+        throw std::runtime_error("Failed to set buffer size");
+    }
+
+    int status = pcap_activate(m_handle);
+    if (status != 0)
+    {
+        std::string error = "pcap_activate failed: ";
+        if (status == PCAP_WARNING)
+        {
+            std::cerr << "Warning: " << pcap_geterr(m_handle) << "\n";
+        }
+        else
+        {
+            error += pcap_geterr(m_handle);
+            pcap_close(m_handle);
+            throw std::runtime_error(error);
+        }
+    }
+
+    std::cout << "Capture initialized with 128MB buffer, snaplen=262144\n";
+}
+
+CaptureEngine::~CaptureEngine()
+{
+    if (m_handle != nullptr)
+    {
+        pcap_close(m_handle);
+    }
+}
+
+bool CaptureEngine::addFilter(const std::string& filter)
+{
+    assert(m_handle);
+    if (m_handle == nullptr)
+    {
+        return false;
+    }
+
+    struct bpf_program bfp;
+    if (pcap_compile(m_handle, &bfp, filter.c_str(), 0, PCAP_NETMASK_UNKNOWN) == -1)
+    {
+        std::cerr << "pcap_compile failed: " << pcap_geterr(m_handle) << '\n';
+        return false;
+    }
+
+    if (pcap_setfilter(m_handle, &bfp) == -1)
+    {
+        std::cerr << "pcap_setfilter failed: " << pcap_geterr(m_handle) << '\n';
+        pcap_freecode(&bfp);
+        return false;
+    }
+    // No longer needed we can free it
+    pcap_freecode(&bfp);
+    return true;
+}
+
+void CaptureEngine::run(HttpFlowAnalyzer& analyzer, std::atomic<bool>* stop_flag)
+{
+    CallbackData data;
+    data.analyzer = &analyzer;
+    data.stop_flag = stop_flag;
+    data.handle = m_handle;
+
+    // Use pcap_loop with breakloop capability for signal handling
+    int result = pcap_loop(m_handle, -1, pkt_handler, reinterpret_cast<u_char*>(&data));
+
+    if (result == -2)
+    {
+        std::cout << "\nCapture loop terminated by breakloop\n";
+    }
+    else if (result == -1)
+    {
+        std::cerr << "\nError in pcap_loop: " << pcap_geterr(m_handle) << "\n";
+    }
+
+    struct pcap_stat stats;
+    if (pcap_stats(m_handle, &stats) == 0)
+    {
+        std::cout << "\n=== PCAP STATISTICS ===\n";
+        std::cout << "Packets received by filter: " << stats.ps_recv << "\n";
+        std::cout << "Packets dropped by kernel: " << stats.ps_drop << "\n";
+        std::cout << "Packets dropped by interface: " << stats.ps_ifdrop << "\n";
+        if (stats.ps_drop > 0)
+        {
+            std::cout << "⚠️  WARNING: " << stats.ps_drop << " packets were DROPPED!\n";
+            std::cout << "   Consider increasing buffer size or processing packets faster.\n";
+        }
+        std::cout << "=======================\n";
+        std::cout << std::flush;  // Force flush to ensure output is written
+    }
+}
