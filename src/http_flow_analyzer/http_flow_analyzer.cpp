@@ -25,7 +25,7 @@
 
 constexpr uint64_t MS_PER_SECOND = 1000;  // 1000 milliseconds in 1 second
 
-HttpFlowAnalyzer::HttpFlowAnalyzer() {}
+HttpFlowAnalyzer::HttpFlowAnalyzer() : m_server_port(0) {}
 
 HttpFlowAnalyzer::~HttpFlowAnalyzer() {}
 
@@ -55,14 +55,14 @@ void HttpFlowAnalyzer::onPacketReceived(const struct pcap_pkthdr* hdr, const u_c
 
     size_t key_hash = get_flow_key_hash(payload_info);
 
-    // From client to server (destination port 8080) - HTTP request
-    if (payload_info.dstport == 8080)
+    // From client to server (destination port is server port) - HTTP request
+    if (payload_info.dstport == m_server_port)
     {
         analyzeRequestPacket(key_hash, ts_ms, payload_info, payload,
                              static_cast<size_t>(payload_len));
     }
-    // From server to client (source port 8080) - HTTP response
-    else if (payload_info.srcport == 8080)
+    // From server to client (source port is server port) - HTTP response
+    else if (payload_info.srcport == m_server_port)
     {
         analyzeResponsePacket(key_hash, ts_ms, payload_info, payload,
                               static_cast<size_t>(payload_len));
@@ -145,7 +145,7 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
             if (ret > 0)
             {
                 request_count++;
-                
+
                 // Store request information (only first request per flow for now)
                 if (!entry.request_captured)
                 {
@@ -153,19 +153,19 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
                     entry.request_uri = std::string(path, path_len);
                     entry.request_version = std::string("HTTP/1.") + std::to_string(minor_version);
                     entry.request_timestamp_ms = timestamp_ms;
-                    
+
                     // Store client and server addresses/ports
                     entry.client_addr = std::string(packet_info.src);
                     entry.client_port = packet_info.srcport;
                     entry.server_addr = std::string(packet_info.dst);
                     entry.server_port = packet_info.dstport;
-                    
+
                     // Extract Host and User-Agent headers
                     for (size_t i = 0; i < num_headers; ++i)
                     {
                         std::string hdr_name(headers[i].name, headers[i].name_len);
                         std::string hdr_value(headers[i].value, headers[i].value_len);
-                        
+
                         if (hdr_name == "Host" || hdr_name == "host")
                         {
                             entry.request_host = hdr_value;
@@ -175,10 +175,10 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
                             entry.request_user_agent = hdr_value;
                         }
                     }
-                    
+
                     entry.request_captured = true;
                 }
-                
+
                 std::cout << "HTTP Request: " << std::string(method, method_len) << " "
                           << std::string(path, path_len) << " flow=" << flow_key << "\n";
                 // Move past this request to find next one

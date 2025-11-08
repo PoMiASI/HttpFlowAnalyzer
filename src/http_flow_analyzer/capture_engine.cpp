@@ -3,6 +3,7 @@
 #include <assert.h>
 
 #include <atomic>
+#include <cctype>
 #include <iostream>
 
 constexpr auto PCAP_BUFFER_SIZE = 128 * 1024 * 1024; // 128MB
@@ -94,6 +95,51 @@ CaptureEngine::~CaptureEngine()
     }
 }
 
+uint16_t CaptureEngine::extractPortFromFilter(const std::string& filter)
+{
+    // Look for patterns like "port 8080" or "port 80"
+    size_t port_pos = filter.find("port");
+    if (port_pos == std::string::npos)
+    {
+        return 0; // Not found
+    }
+    
+    // Skip "port" and any whitespace
+    size_t num_start = port_pos + 4;
+    while (num_start < filter.length() && std::isspace(filter[num_start]))
+    {
+        ++num_start;
+    }
+    
+    // Extract digits
+    if (num_start >= filter.length() || !std::isdigit(filter[num_start]))
+    {
+        return 0;
+    }
+    
+    size_t num_end = num_start;
+    while (num_end < filter.length() && std::isdigit(filter[num_end]))
+    {
+        ++num_end;
+    }
+    
+    std::string port_str = filter.substr(num_start, num_end - num_start);
+    try
+    {
+        int port = std::stoi(port_str);
+        if (port > 0 && port <= 65535)
+        {
+            return static_cast<uint16_t>(port);
+        }
+    }
+    catch (...)
+    {
+        return 0;
+    }
+    
+    return 0;
+}
+
 bool CaptureEngine::addFilter(const std::string& filter)
 {
     assert(m_handle);
@@ -102,6 +148,9 @@ bool CaptureEngine::addFilter(const std::string& filter)
         return false;
     }
 
+    // Extract port from filter for later use
+    m_filter_port = extractPortFromFilter(filter);
+    
     struct bpf_program bfp;
     if (pcap_compile(m_handle, &bfp, filter.c_str(), 0, PCAP_NETMASK_UNKNOWN) == -1)
     {
@@ -153,5 +202,13 @@ void CaptureEngine::run(HttpFlowAnalyzer& analyzer, std::atomic<bool>* stop_flag
         }
         std::cout << "=======================\n";
         std::cout << std::flush;  // Force flush to ensure output is written
+    }
+}
+
+void CaptureEngine::stop()
+{
+    if (m_handle != nullptr)
+    {
+        pcap_breakloop(m_handle);
     }
 }

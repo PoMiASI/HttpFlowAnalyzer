@@ -53,7 +53,12 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    HttpFlowSnifferApp app(dev, filter_expr, csv_output ? csv_output : "");
+    if (csv_output == nullptr)
+    {
+        csv_output = "output.csv";
+    }
+
+    HttpFlowSnifferApp app(dev, filter_expr, csv_output);
     app.run();
 
     return 0;

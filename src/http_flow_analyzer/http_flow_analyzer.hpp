@@ -3,6 +3,7 @@
 
 #include <pcap.h>
 #include <cstdint>
+#include <memory>
 
 #include "http_flow_store.hpp"
 #include "sniffer_utils.hpp"
@@ -13,6 +14,9 @@ class HttpFlowAnalyzer
     HttpFlowAnalyzer();
     ~HttpFlowAnalyzer();
 
+    // Set server port for distinguishing requests (client->server) from responses (server->client)
+    void setServerPort(uint16_t port) { m_server_port = port; }
+    
     // Main entry point: receives raw packet and performs HTTP flow analysis
     virtual void onPacketReceived(const struct pcap_pkthdr* h, const u_char* bytes);
 
@@ -34,6 +38,7 @@ class HttpFlowAnalyzer
                                const uint8_t* payload, size_t payload_len);
 
     HttpFlowStore m_store;  // Owns the flow data
+    uint16_t m_server_port{0}; // Server port (must be set before processing packets)
 };
 
 #endif  // HTTP_FLOW_ANALYZER_HPP
