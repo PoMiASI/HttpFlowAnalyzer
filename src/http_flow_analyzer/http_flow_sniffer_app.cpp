@@ -1,9 +1,8 @@
 #include "http_flow_sniffer_app.hpp"
 
-#include <iostream>
-
 #include "csv_flow_exporter.hpp"
 #include "http_flow_statistics.hpp"
+#include "logger.hpp"
 #include "signal_registry.hpp"
 
 HttpFlowSnifferApp::HttpFlowSnifferApp(const std::string& interface, const std::string& filter,
@@ -13,8 +12,6 @@ HttpFlowSnifferApp::HttpFlowSnifferApp(const std::string& interface, const std::
       csv_output_(csv_output), 
       capture_engine_(interface)
 {
-    // Disable stdout buffering for real-time output when redirected to file
-    std::cout.setf(std::ios::unitbuf);
     capture_engine_.addFilter(filter_);
 }
 
@@ -26,12 +23,12 @@ void HttpFlowSnifferApp::run()
     uint16_t server_port = capture_engine_.getFilterPort();
     if (server_port == 0)
     {
-        std::cerr << "ERROR: Could not extract server port from filter: '" << filter_ << "'" << std::endl;
-        std::cerr << "Filter must contain 'port NNNN' pattern (e.g., 'tcp port 8080')" << std::endl;
+        LOG_ERROR("Could not extract server port from filter: '" << filter_ << "'");
+        LOG_ERROR("Filter must contain 'port NNNN' pattern (e.g., 'tcp port 8080')");
         return;
     }
     
-    std::cout << "Server port extracted from filter: " << server_port << std::endl;
+    LOG_INFO("Server port extracted from filter: " << server_port);
     analyzer_.setServerPort(server_port);
     
     // Register this instance for signal handling

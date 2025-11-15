@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "http_flow_statistics.hpp"
+#include "logger.hpp"
 #include "picohttpparser.h"
 #include "sniffer_utils.hpp"
 
@@ -108,7 +109,7 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
         if (search_offset == 0 && remaining >= 3 && strncmp(cbuf, "GET", 3) == 0)
         {
             request_start = cbuf;
-            std::cout << "DBG: Found GET at start of packet (offset=0)" << "\n";
+            LOG_DEBUG("Found GET at start of packet (offset=0)");
         }
         // Subsequent requests - look for "\r\n\r\nGET " pattern
         else if (remaining >= 7)
@@ -122,7 +123,7 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
                 {
                     request_start = cbuf + i + 4;  // Start of "GET"
                     search_offset = i + 4;
-                    std::cout << "DBG: Found GET after \\r\\n\\r\\n at offset=" << (i + 4) << "\n";
+                    LOG_DEBUG("Found GET after \\r\\n\\r\\n at offset=" << (i + 4));
                     break;
                 }
             }
@@ -179,19 +180,19 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
                     entry.request_captured = true;
                 }
 
-                std::cout << "HTTP Request: " << std::string(method, method_len) << " "
-                          << std::string(path, path_len) << " flow=" << flow_key << "\n";
+                LOG_INFO("HTTP Request: " << std::string(method, method_len) << " "
+                         << std::string(path, path_len) << " flow=" << flow_key);
                 // Move past this request to find next one
                 search_offset = (request_start - cbuf) + ret;
             }
             else if (ret == -2)
             {
-                std::cout << "HTTP request incomplete (need more bytes)" << "\n";
+                LOG_DEBUG("HTTP request incomplete (need more bytes)");
                 break;  // Can't continue searching if request is incomplete
             }
             else
             {
-                std::cout << "HTTP request parse error" << "\n";
+                LOG_WARNING("HTTP request parse error");
                 break;
             }
         }
@@ -203,8 +204,7 @@ void HttpFlowAnalyzer::analyzeRequestPacket(size_t flow_key, uint64_t timestamp_
 
     if (request_count > 1)
     {
-        std::cout << "⚠️  PIPELINING DETECTED: " << request_count << " requests in one TCP packet!"
-                  << "\n";
+        LOG_WARNING("PIPELINING DETECTED: " << request_count << " requests in one TCP packet!");
     }
 }
 
@@ -238,10 +238,9 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
     // completed)
     if (!http_start && !has_existing_flow)
     {
-        std::cout << "DBG: Ignoring packet for flow=" << flow_key
+        LOG_DEBUG("Ignoring packet for flow=" << flow_key
                   << " (no HTTP header, flow already complete or not started yet)"
-                  << " seq=" << ntohl(packet_info.tcp->th_seq) << " payload_len=" << payload_len
-                  << "\n";
+                  << " seq=" << ntohl(packet_info.tcp->th_seq) << " payload_len=" << payload_len);
         return;
     }
 
@@ -270,17 +269,20 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
         if (ret > 0)
         {
             // Successfully parsed HTTP response header
-            std::cout << "HTTP Response: flow=" << flow_key << " status=" << status;
+            std::stringstream response_info;
+            response_info << "HTTP Response: flow=" << flow_key << " status=" << status;
             if (msg && msg_len > 0)
-                std::cout << " msg=" << std::string(msg, msg_len);
-            std::cout << " headers=" << num_headers << "\n";
+                response_info << " msg=" << std::string(msg, msg_len);
+            response_info << " headers=" << num_headers;
+            LOG_INFO(response_info.str());
+            
             for (size_t i = 0; i < num_headers; ++i)
             {
                 std::string name(headers[i].name != nullptr ? headers[i].name : "",
                                  headers[i].name_len);
                 std::string value(headers[i].value != nullptr ? headers[i].value : "",
                                   headers[i].value_len);
-                std::cout << "  " << name << ": " << value << "\n";
+                LOG_DEBUG("  " << name << ": " << value);
                 if (name == "Content-Length")
                 {
                     entry.totalBytes = std::stoull(value);
@@ -300,16 +302,16 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
             // server_isn
             if (entry.server_isn_set)
             {
-                std::cout << "DBG: new HTTP response header detected for flow=" << flow_key
+                LOG_DEBUG("new HTTP response header detected for flow=" << flow_key
                           << " old_server_isn=" << entry.server_isn << " new_seq=" << header_seq
                           << " old_totalBytes=" << entry.totalBytes
-                          << " old_byteCount=" << entry.byteCount << "\n";
+                          << " old_byteCount=" << entry.byteCount);
 
                 // Process any buffered packets that belong to the OLD response (before reset)
                 if (!entry.buffered_packets.empty())
                 {
-                    std::cout << "DBG: processing " << entry.buffered_packets.size()
-                              << " buffered packets from OLD response before reset" << "\n";
+                    LOG_DEBUG("processing " << entry.buffered_packets.size()
+                              << " buffered packets from OLD response before reset");
 
                     for (const auto& buffered : entry.buffered_packets)
                     {
@@ -329,27 +331,26 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                         // Keep ranges for debugging
                         entry.received_ranges.emplace_back(start_off, end_off);
 
-                        std::cout << "DBG: processed OLD buffered packet seq=" << buffered.seq
-                                  << " start_off=" << start_off << " len=" << len64 << "\n";
+                        LOG_DEBUG("processed OLD buffered packet seq=" << buffered.seq
+                                  << " start_off=" << start_off << " len=" << len64);
                     }
                 }
 
                 // Check if old response is complete and report it
                 if (entry.totalBytes > 0 && entry.byteCount >= entry.totalBytes)
                 {
-                    std::cout << "DBG: OLD response complete: totalBytes=" << entry.totalBytes
-                              << " byteCount=" << entry.byteCount << "\n";
+                    LOG_DEBUG("OLD response complete: totalBytes=" << entry.totalBytes
+                              << " byteCount=" << entry.byteCount);
                 }
                 else if (entry.totalBytes > 0)
                 {
-                    std::cout << "DBG: OLD response INCOMPLETE: totalBytes=" << entry.totalBytes
+                    LOG_WARNING("OLD response INCOMPLETE: totalBytes=" << entry.totalBytes
                               << " byteCount=" << entry.byteCount
-                              << " missing=" << (entry.totalBytes - entry.byteCount) << "\n";
+                              << " missing=" << (entry.totalBytes - entry.byteCount));
                 }
 
                 // Now reset for NEW response
-                std::cout << "DBG: resetting received_ranges and byteCount for NEW response"
-                          << "\n";
+                LOG_DEBUG("resetting received_ranges and byteCount for NEW response");
                 entry.received_ranges.clear();
                 entry.byteCount = 0;
                 entry.excess_data_dumped = false;  // Reset for new response
@@ -368,8 +369,8 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
             // Process buffered packets now that we know server_isn
             if (!entry.buffered_packets.empty())
             {
-                std::cout << "DBG: processing " << entry.buffered_packets.size()
-                          << " buffered packets for flow=" << flow_key << "\n";
+                LOG_DEBUG("processing " << entry.buffered_packets.size()
+                          << " buffered packets for flow=" << flow_key);
 
                 // Keep track of which buffered packets should be reprocessed later
                 std::vector<BufferedPacket> packets_for_next_response;
@@ -387,9 +388,9 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                     // NEXT response) Typical HTTP responses are < 100MB, so > 4GB means wraparound
                     if (start_off > 4000000000ULL)
                     {
-                        std::cout << "DBG: buffered packet seq=" << buffered.seq
+                        LOG_DEBUG("buffered packet seq=" << buffered.seq
                                   << " has huge offset=" << start_off << " (wraparound detected)"
-                                  << " - keeping for next response" << "\n";
+                                  << " - keeping for next response");
                         packets_for_next_response.push_back(buffered);
                         continue;
                     }
@@ -403,17 +404,16 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                     // Keep ranges for debugging
                     entry.received_ranges.emplace_back(start_off, end_off);
 
-                    std::cout << "DBG: processed buffered packet seq=" << buffered.seq
-                              << " start_off=" << start_off << " len=" << len64 << "\n";
+                    LOG_DEBUG("processed buffered packet seq=" << buffered.seq
+                              << " start_off=" << start_off << " len=" << len64);
                 }
 
                 // Replace buffer with packets that belong to next response
                 entry.buffered_packets = packets_for_next_response;
                 if (!packets_for_next_response.empty())
                 {
-                    std::cout << "DBG: kept " << packets_for_next_response.size()
-                              << " buffered packets for next response (wraparound detected)"
-                              << "\n";
+                    LOG_DEBUG("kept " << packets_for_next_response.size()
+                              << " buffered packets for next response (wraparound detected)");
                 }
             }
 
@@ -437,17 +437,17 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
             ranges.emplace_back(body_start_off, body_end_off);
 
             // debug log
-            std::cout << "DBG: ts=" << timestamp_ms << " flow=" << flow_key
+            LOG_DEBUG("ts=" << timestamp_ms << " flow=" << flow_key
                       << " 5-tuple=" << packet_info.src << ":" << packet_info.srcport << "->"
                       << packet_info.dst << ":" << packet_info.dstport << " seq=" << seq32
                       << " server_isn=" << entry.server_isn << " ret(header_len)=" << ret
                       << " payload_len=" << payload_len << " body_start_off=" << body_start_off
                       << " added=" << added << " totalByteCount=" << entry.byteCount
-                      << " totalBytesHdr=" << entry.totalBytes << "\n";
+                      << " totalBytesHdr=" << entry.totalBytes);
         }
         else
         {
-            std::cout << "HTTP response incomplete (need more bytes)" << "\n";
+            LOG_DEBUG("HTTP response incomplete (need more bytes)");
         }
     }
     else
@@ -464,9 +464,9 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
             buffered.payload.assign(payload, payload + payload_len);
             entry.buffered_packets.push_back(buffered);
 
-            std::cout << "DBG: buffering pre-header packet seq=" << seq32
+            LOG_DEBUG("buffering pre-header packet seq=" << seq32
                       << " payload_len=" << payload_len << " for flow=" << flow_key
-                      << " (total buffered: " << entry.buffered_packets.size() << ")" << "\n";
+                      << " (total buffered: " << entry.buffered_packets.size() << ")");
             return;
         }
 
@@ -489,32 +489,31 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
         ranges.emplace_back(start_off, end_off);
 
         // debug log for non-header packets
-        std::cout << "DBG: ts=" << timestamp_ms << " flow=" << flow_key
+        LOG_DEBUG("ts=" << timestamp_ms << " flow=" << flow_key
                   << " 5-tuple=" << packet_info.src << ":" << packet_info.srcport << "->"
                   << packet_info.dst << ":" << packet_info.dstport << " seq=" << seq32
                   << " payload_len=" << payload_len << " start_off=" << start_off
                   << " added=" << added << " totalByteCount=" << entry.byteCount
-                  << " totalBytesHdr=" << entry.totalBytes << "\n";
+                  << " totalBytesHdr=" << entry.totalBytes);
     }
 
     // Sanity alarm: byteCount should not exceed totalBytes. If it does, print a warning and dump
     // ranges.
     if (entry.totalBytes > 0 && entry.byteCount > entry.totalBytes)
     {
-        std::cout << "ALARM: byteCount(" << entry.byteCount << ") > Content-Length("
-                  << entry.totalBytes << ") for flow=" << flow_key << "\n";
+        LOG_ERROR("ALARM: byteCount(" << entry.byteCount << ") > Content-Length("
+                  << entry.totalBytes << ") for flow=" << flow_key);
 
         // Calculate how many excess bytes we have
         uint64_t excess_bytes = entry.byteCount - entry.totalBytes;
-        std::cout << "ALARM: excess bytes = " << excess_bytes << "\n";
+        LOG_ERROR("ALARM: excess bytes = " << excess_bytes);
 
         // Dump current packet details on first alarm for this flow
         if (!entry.excess_data_dumped)
         {
-            std::cout << "ALARM: ===== FIRST PACKET CAUSING EXCESS FOR FLOW " << flow_key
-                      << " =====" << "\n";
-            std::cout << "ALARM: Current packet: payload_len=" << payload_len << " bytes"
-                      << "\n";
+            LOG_ERROR("ALARM: ===== FIRST PACKET CAUSING EXCESS FOR FLOW " << flow_key
+                      << " =====");
+            LOG_ERROR("ALARM: Current packet: payload_len=" << payload_len << " bytes");
 
             if (payload_len > 0)
             {
@@ -523,37 +522,38 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                     static_cast<uint32_t>(seq32 - static_cast<uint32_t>(entry.server_isn));
                 uint64_t packet_start_off = static_cast<uint64_t>(delta);
 
-                std::cout << "ALARM: Packet starts at offset=" << packet_start_off
-                          << ", ends at=" << (packet_start_off + payload_len) << "\n";
-                std::cout << "ALARM: Content-Length boundary at offset=" << entry.totalBytes
-                          << "\n";
+                LOG_ERROR("ALARM: Packet starts at offset=" << packet_start_off
+                          << ", ends at=" << (packet_start_off + payload_len));
+                LOG_ERROR("ALARM: Content-Length boundary at offset=" << entry.totalBytes);
 
                 // Dump first 200 bytes of this packet
                 size_t dump_len = std::min(payload_len, (size_t)200);
-                std::cout << "ALARM: First " << dump_len
-                          << " bytes of packet payload (hex+ASCII):" << "\n";
+                LOG_ERROR("ALARM: First " << dump_len
+                          << " bytes of packet payload (hex+ASCII):");
 
                 for (size_t i = 0; i < dump_len; i += 16)
                 {
-                    std::cout << "ALARM:   ";
+                    std::stringstream hex_line;
+                    hex_line << "ALARM:   ";
                     // Hex dump
                     for (size_t j = 0; j < 16 && (i + j) < dump_len; ++j)
                     {
-                        printf("%02x ", payload[i + j]);
+                        hex_line << std::setfill('0') << std::setw(2) << std::hex 
+                                 << (int)payload[i + j] << " ";
                     }
                     // Padding
                     for (size_t j = dump_len - i; j < 16 && j > 0; ++j)
                     {
-                        std::cout << "   ";
+                        hex_line << "   ";
                     }
-                    std::cout << " | ";
+                    hex_line << " | ";
                     // ASCII dump
                     for (size_t j = 0; j < 16 && (i + j) < dump_len; ++j)
                     {
                         char c = payload[i + j];
-                        std::cout << (c >= 32 && c <= 126 ? c : '.');
+                        hex_line << (c >= 32 && c <= 126 ? c : '.');
                     }
-                    std::cout << "\n";
+                    LOG_ERROR(hex_line.str());
                 }
 
                 // If this packet crosses the Content-Length boundary, show where excess starts
@@ -561,8 +561,8 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                     packet_start_off + payload_len > entry.totalBytes)
                 {
                     uint64_t excess_offset_in_packet = entry.totalBytes - packet_start_off;
-                    std::cout << "ALARM: Excess data starts at byte " << excess_offset_in_packet
-                              << " within this packet" << "\n";
+                    LOG_ERROR("ALARM: Excess data starts at byte " << excess_offset_in_packet
+                              << " within this packet");
 
                     if (excess_offset_in_packet < payload_len)
                     {
@@ -577,53 +577,49 @@ void HttpFlowAnalyzer::analyzeResponsePacket(size_t flow_key, uint64_t timestamp
                                 excess_str[2] == 'T' && excess_str[3] == 'P' &&
                                 excess_str[4] == '/')
                             {
-                                std::cout
-                                    << "⚠️  FOUND: Next HTTP response header starts in this packet!"
-                                    << "\n";
-                                std::cout << "⚠️  HTTP pipelining/keep-alive detected\n";
+                                LOG_WARNING("FOUND: Next HTTP response header starts in this packet!");
+                                LOG_WARNING("HTTP pipelining/keep-alive detected");
                             }
                         }
                     }
                 }
             }
 
-            std::cout << "ALARM: ===== END EXCESS DUMP =====" << "\n";
+            LOG_ERROR("ALARM: ===== END EXCESS DUMP =====");
             entry.excess_data_dumped = true;
         }
 
         auto& ranges = entry.received_ranges;
-        std::cout << "ALARM: ranges_count=" << ranges.size() << "\n";
+        LOG_ERROR("ALARM: ranges_count=" << ranges.size());
         for (size_t i = 0; i < ranges.size(); ++i)
         {
-            std::cout << "ALARM: range[" << i << "]=" << ranges[i].first << "-" << ranges[i].second
-                      << "\n";
+            LOG_ERROR("ALARM: range[" << i << "]=" << ranges[i].first << "-" << ranges[i].second);
         }
     }
 
     if (entry.totalBytes > 0 && entry.byteCount >= entry.totalBytes)
     {
         // Flow is complete
-        std::cout << "Flow complete: totalBytes=" << entry.totalBytes
-                  << " byteCount=" << entry.byteCount << "\n";
+        LOG_INFO("Flow complete: totalBytes=" << entry.totalBytes
+                  << " byteCount=" << entry.byteCount);
         // dump ranges summary (first/last few ranges)
         auto& ranges = entry.received_ranges;
-        std::cout << "DBG: flow=" << flow_key << " ranges_count=" << ranges.size() << "\n";
+        LOG_DEBUG("flow=" << flow_key << " ranges_count=" << ranges.size());
         size_t N = ranges.size();
         size_t show = 5;
         for (size_t i = 0; i < std::min(show, N); ++i)
         {
-            std::cout << "DBG: range[" << i << "]=" << ranges[i].first << "-" << ranges[i].second
-                      << "\n";
+            LOG_DEBUG("range[" << i << "]=" << ranges[i].first << "-" << ranges[i].second);
         }
         if (N > show * 2)
         {
-            std::cout << "DBG: ... (" << (N - show * 2) << " ranges elided) ...\n";
+            LOG_DEBUG("... (" << (N - show * 2) << " ranges elided) ...");
         }
         for (size_t i = (N > show ? N - show : show); i < N; ++i)
         {
             if (i >= show)
-                std::cout << "DBG: range[" << i << "]=" << ranges[i].first << "-"
-                          << ranges[i].second << "\n";
+                LOG_DEBUG("range[" << i << "]=" << ranges[i].first << "-"
+                          << ranges[i].second);
         }
         m_store.erase(flow_key);
     }
