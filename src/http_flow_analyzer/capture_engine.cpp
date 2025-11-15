@@ -6,6 +6,8 @@
 #include <cctype>
 #include <iostream>
 
+#include "logger.hpp"
+
 constexpr auto PCAP_BUFFER_SIZE = 128 * 1024 * 1024; // 128MB
 constexpr auto PCAP_TIMEOUT = 1000; // 1 second
 constexpr auto PCAP_SNAPLEN = 262144; // 262144 bytes
@@ -74,7 +76,7 @@ CaptureEngine::CaptureEngine(const std::string& interface) : m_handle(nullptr)
         std::string error = "pcap_activate failed: ";
         if (status == PCAP_WARNING)
         {
-            std::cerr << "Warning: " << pcap_geterr(m_handle) << "\n";
+            LOG_WARNING("pcap_activate warning: " << pcap_geterr(m_handle));
         }
         else
         {
@@ -84,7 +86,7 @@ CaptureEngine::CaptureEngine(const std::string& interface) : m_handle(nullptr)
         }
     }
 
-    std::cout << "Capture initialized with 128MB buffer, snaplen=262144\n";
+    LOG_INFO("Capture initialized with 128MB buffer, snaplen=262144");
 }
 
 CaptureEngine::~CaptureEngine()
@@ -154,13 +156,13 @@ bool CaptureEngine::addFilter(const std::string& filter)
     struct bpf_program bfp;
     if (pcap_compile(m_handle, &bfp, filter.c_str(), 0, PCAP_NETMASK_UNKNOWN) == -1)
     {
-        std::cerr << "pcap_compile failed: " << pcap_geterr(m_handle) << '\n';
+        LOG_ERROR("pcap_compile failed: " << pcap_geterr(m_handle));
         return false;
     }
 
     if (pcap_setfilter(m_handle, &bfp) == -1)
     {
-        std::cerr << "pcap_setfilter failed: " << pcap_geterr(m_handle) << '\n';
+        LOG_ERROR("pcap_setfilter failed: " << pcap_geterr(m_handle));
         pcap_freecode(&bfp);
         return false;
     }
@@ -181,27 +183,26 @@ void CaptureEngine::run(HttpFlowAnalyzer& analyzer, std::atomic<bool>* stop_flag
 
     if (result == -2)
     {
-        std::cout << "\nCapture loop terminated by breakloop\n";
+        LOG_INFO("Capture loop terminated by breakloop");
     }
     else if (result == -1)
     {
-        std::cerr << "\nError in pcap_loop: " << pcap_geterr(m_handle) << "\n";
+        LOG_ERROR("Error in pcap_loop: " << pcap_geterr(m_handle));
     }
 
     struct pcap_stat stats;
     if (pcap_stats(m_handle, &stats) == 0)
     {
-        std::cout << "\n=== PCAP STATISTICS ===\n";
-        std::cout << "Packets received by filter: " << stats.ps_recv << "\n";
-        std::cout << "Packets dropped by kernel: " << stats.ps_drop << "\n";
-        std::cout << "Packets dropped by interface: " << stats.ps_ifdrop << "\n";
+        LOG_INFO("=== PCAP STATISTICS ===");
+        LOG_INFO("Packets received by filter: " << stats.ps_recv);
+        LOG_INFO("Packets dropped by kernel: " << stats.ps_drop);
+        LOG_INFO("Packets dropped by interface: " << stats.ps_ifdrop);
         if (stats.ps_drop > 0)
         {
-            std::cout << "⚠️  WARNING: " << stats.ps_drop << " packets were DROPPED!\n";
-            std::cout << "   Consider increasing buffer size or processing packets faster.\n";
+            LOG_WARNING("WARNING: " << stats.ps_drop << " packets were DROPPED!");
+            LOG_WARNING("Consider increasing buffer size or processing packets faster.");
         }
-        std::cout << "=======================\n";
-        std::cout << std::flush;  // Force flush to ensure output is written
+        LOG_INFO("=======================");
     }
 }
 

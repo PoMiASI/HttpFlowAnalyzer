@@ -4,12 +4,14 @@
 #include <iostream>
 #include <iomanip>
 
+#include "logger.hpp"
+
 bool CSVFlowExporter::exportFlows(const HttpFlowStore& store, const std::string& output)
 {
     std::ofstream csv(output);
     if (!csv.is_open())
     {
-        std::cerr << "Failed to open CSV file for writing: " << output << std::endl;
+        LOG_ERROR("Failed to open CSV file for writing: " << output);
         return false;
     }
 
@@ -117,8 +119,8 @@ bool CSVFlowExporter::exportFlows(const HttpFlowStore& store, const std::string&
     }
 
     csv.close();
-    std::cout << "CSV export complete: " << output << std::endl;
-    std::cout << "  Active flows: " << store.size() << std::endl;
-    std::cout << "  Completed flows: " << store.completed_count() << std::endl;
+    LOG_INFO("CSV export complete: " << output);
+    LOG_INFO("  Active flows: " << store.size());
+    LOG_INFO("  Completed flows: " << store.completed_count());
     return true;
 }

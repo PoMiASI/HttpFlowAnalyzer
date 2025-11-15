@@ -6,6 +6,7 @@ add_executable(http_flow_analyzer
 	${CMAKE_CURRENT_SOURCE_DIR}/http_flow_analyzer/capture_engine.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/http_flow_analyzer/http_flow_statistics.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/http_flow_analyzer/csv_flow_exporter.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/http_flow_analyzer/logger.cpp
 )
 
 target_compile_options(http_flow_analyzer PRIVATE -O2 -Wall)

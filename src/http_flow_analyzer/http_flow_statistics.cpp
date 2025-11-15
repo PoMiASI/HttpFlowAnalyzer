@@ -3,12 +3,14 @@
 #include <iostream>
 #include <vector>
 
+#include "logger.hpp"
+
 void HttpFlowStatistics::printSummary(const HttpFlowStore& store)
 {
-    std::cout << "\n=== HTTP FLOW STATISTICS ===" << std::endl;
+    LOG_INFO("=== HTTP FLOW STATISTICS ===");
 
-    std::cout << "Active flows tracked: " << store.size() << std::endl;
-    std::cout << "Completed flows (archived): " << store.completed_count() << std::endl;
+    LOG_INFO("Active flows tracked: " << store.size());
+    LOG_INFO("Completed flows (archived): " << store.completed_count());
 
     int incomplete_flows = 0;
     int awaiting_response = 0;
@@ -18,29 +20,28 @@ void HttpFlowStatistics::printSummary(const HttpFlowStore& store)
         if (data.totalBytes > 0 && data.byteCount < data.totalBytes)
         {
             incomplete_flows++;
-            std::cout << "Incomplete flow " << flow_key << ": totalBytes=" << data.totalBytes
+            LOG_WARNING("Incomplete flow " << flow_key << ": totalBytes=" << data.totalBytes
                       << " byteCount=" << data.byteCount << " ("
-                      << (data.byteCount * 100.0 / data.totalBytes) << "%)" << std::endl;
+                      << (data.byteCount * 100.0 / data.totalBytes) << "%)");
         }
         else if (data.totalBytes == 0)
         {
             awaiting_response++;
-            std::cout << "Flow awaiting HTTP response " << flow_key
+            LOG_DEBUG("Flow awaiting HTTP response " << flow_key
                       << ": byteCount=" << data.byteCount
                       << " server_isn_set=" << data.server_isn_set
-                      << " buffered=" << data.buffered_packets.size() << std::endl;
+                      << " buffered=" << data.buffered_packets.size());
         }
     }
 
-    std::cout << "Incomplete flows (started but interrupted): " << incomplete_flows << std::endl;
-    std::cout << "Flows awaiting response (request sent, no response): " << awaiting_response
-              << std::endl;
-    std::cout << "============================" << std::endl;
+    LOG_INFO("Incomplete flows (started but interrupted): " << incomplete_flows);
+    LOG_INFO("Flows awaiting response (request sent, no response): " << awaiting_response);
+    LOG_INFO("============================");
 }
 
 bool HttpFlowStatistics::exportFlows(const HttpFlowStore& store, FlowExporter& exporter,
                                      const std::string& output)
 {
-    std::cout << "Exporting flows using " << exporter.getFormatName() << " format..." << std::endl;
+    LOG_INFO("Exporting flows using " << exporter.getFormatName() << " format...");
     return exporter.exportFlows(store, output);
 }
